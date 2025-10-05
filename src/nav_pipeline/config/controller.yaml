@@ -1,30 +1,30 @@
 pure_pursuit_controller:
   ros__parameters:
     lookahead: 0.5
-    v_nominal: 0.22
-    v_min: 0.08
-    v_max: 0.30
-    w_max: 1.5
-    goal_tolerance: 0.15
+    v_nominal: 0.18
+    v_min: 0.05
+    v_max: 0.22
+    w_max: 1.2
+    goal_tolerance: 0.10
     odom_topic: "/odom"
     topic_cmd_vel: "/cmd_vel"
     trajectory_topic: "timed_trajectory"
 
 path_smoother:
   ros__parameters:
-    samples_per_segment: 15
-    resample_ds: 0.03
+    samples_per_segment: 10
+    resample_ds: 0.05
     closed: false
-    frame_id: "map"
+    frame_id: "odom"
 
 trajectory_generator:
   ros__parameters:
-    v_max: 0.25
-    a_max: 0.5
-    frame_id: "map"
-    publish_rate: 5.0
+    v_max: 0.20
+    a_max: 0.3
+    frame_id: "odom"
+    publish_rate: 10.0
 
 waypoint_server:
   ros__parameters:
     waypoint_file: ""   # will be set from launch
-    frame_id: "map"
+    frame_id: "odom"

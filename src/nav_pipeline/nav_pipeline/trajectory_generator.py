@@ -1,90 +1,139 @@
 import rclpy
 from rclpy.node import Node
+import numpy as np
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Header
-from nav_pipeline.utils import cumulative_lengths
-import numpy as np
+from visualization_msgs.msg import MarkerArray
+from nav_pipeline.viz_utils import make_line_strip
+from nav_pipeline.utils import resample_by_arclength
+
 
 class TrajectoryGenerator(Node):
     def __init__(self):
         super().__init__('trajectory_generator')
-        # Velocity profile params
-        self.declare_parameter('v_max', 0.25)      # m/s
-        self.declare_parameter('a_max', 0.5)       # m/s^2
-        self.declare_parameter('frame_id', 'map')
-        self.declare_parameter('publish_rate', 5.0)    # Hz (republish latest trajectory)
+        self.declare_parameter('v_max', 0.25)
+        self.declare_parameter('a_max', 0.5)
+        self.declare_parameter('publish_rate', 5.0)
+        self.declare_parameter('frame_id', 'odom')
 
         self.sub = self.create_subscription(Path, 'smoothed_path', self.on_path, 10)
         self.pub = self.create_publisher(Path, 'timed_trajectory', 10)
-
-        self.timer = self.create_timer(1.0/float(self.get_parameter('publish_rate').value), self.repub)
-        self._latest = None
+        self.mpub = self.create_publisher(MarkerArray, 'trajectory_markers', 10)
 
         self.get_logger().info('TrajectoryGenerator ready.')
 
+    # --------------------------------------------------------------
     def on_path(self, msg: Path):
-        if len(msg.poses) < 2:
+        """Receive smoothed path → build and publish time-parameterized trajectory."""
+        if not msg.poses:
+            self.get_logger().warn('Empty smoothed path.')
             return
 
-        pts = np.array([[p.pose.position.x, p.pose.position.y] for p in msg.poses], dtype=float)
-        s = cumulative_lengths(pts)
-        L = s[-1]
+        # --- extract and clean input points ---
+        pts = np.array([[p.pose.position.x, p.pose.position.y] for p in msg.poses])
+        diffs = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        keep = np.concatenate([[True], diffs > 1e-6])
+        pts = pts[keep]
+        if pts.shape[0] < 2:
+            self.get_logger().warn('Too few valid points for trajectory.')
+            return
+
+        # --- compute total arc length ---
+        seglen = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        s = np.concatenate([[0.0], np.cumsum(seglen)])
+        total_len = s[-1]
+        if total_len < 1e-6:
+            self.get_logger().warn('Zero-length path.')
+            return
+
+        # --- parameters ---
         v_max = float(self.get_parameter('v_max').value)
         a_max = float(self.get_parameter('a_max').value)
+        ds = 0.05
 
-        # Trapezoidal: accelerate, cruise, decelerate
-        t_acc = v_max / a_max
-        d_acc = 0.5 * a_max * t_acc**2
+        # --- resample path uniformly ---
+        pts_res = resample_by_arclength(pts, ds=ds)
+        diffs2 = np.linalg.norm(np.diff(pts_res, axis=0), axis=1)
+        keep2 = np.concatenate([[True], diffs2 > 1e-8])
+        pts_res = pts_res[keep2]
 
-        if 2*d_acc > L:
-            # Triangle profile
-            v_peak = np.sqrt(a_max * L)
-            t_acc = v_peak / a_max
-            t_total = 2 * t_acc
-            def time_at_s(si):
-                if si <= 0.5*L:
-                    return np.sqrt(2*si/a_max)
-                else:
-                    sr = L - si
-                    return t_total - np.sqrt(2*sr/a_max)
-        else:
-            d_cruise = L - 2*d_acc
-            t_cruise = d_cruise / v_max
-            t_total = 2*t_acc + t_cruise
-            def time_at_s(si):
-                if si < d_acc:
-                    return np.sqrt(2*si/a_max)
-                elif si < d_acc + d_cruise:
-                    return t_acc + (si - d_acc)/v_max
-                else:
-                    sd = L - si
-                    return t_acc + t_cruise + (t_acc - np.sqrt(2*sd/a_max))
+        # --- trapezoidal velocity profile ---
+        T_accel = v_max / a_max
+        S_accel = 0.5 * a_max * T_accel**2
+        if 2 * S_accel > total_len:
+            S_accel = total_len / 2
+            T_accel = np.sqrt(2 * S_accel / a_max)
 
-        t_list = [time_at_s(si) for si in s]
+        S_cruise = total_len - 2 * S_accel
+        T_cruise = S_cruise / v_max
+        total_time = 2 * T_accel + T_cruise
 
+        s_new = np.arange(0, total_len + 1e-6, ds)
+        t_samples = []
+        for s_i in s_new:
+            if s_i < S_accel:
+                t = np.sqrt(2 * s_i / a_max)
+            elif s_i < S_accel + S_cruise:
+                t = T_accel + (s_i - S_accel) / v_max
+            else:
+                s_rem = total_len - s_i
+                t = total_time - np.sqrt(2 * s_rem / a_max)
+            t_samples.append(t)
+        t_samples = np.array(t_samples)
+
+        # --- build timed Path ---
         out = Path()
-        out.header = msg.header
-        for (x,y), t in zip(pts, t_list):
+        out.header.frame_id = msg.header.frame_id or self.get_parameter('frame_id').value
+        out.header.stamp = self.get_clock().now().to_msg()
+
+        for (x, y), t in zip(pts_res, t_samples[: len(pts_res)]):
             ps = PoseStamped()
             ps.header.frame_id = out.header.frame_id
-            ps.header.stamp = msg.header.stamp
+            ps.header.stamp = out.header.stamp
             ps.pose.position.x = float(x)
             ps.pose.position.y = float(y)
             ps.pose.orientation.w = 1.0
-            # encode time in pose.orientation.z for quick visibility (non-standard, but handy in tests)
             ps.pose.orientation.z = float(t)
             out.poses.append(ps)
 
-        self._latest = out
+        # --- final cleaning: remove duplicates / extra zeros / NaNs ---
+        cleaned = []
+        for ps in out.poses:
+            x = ps.pose.position.x
+            y = ps.pose.position.y
+            if not np.isfinite(x) or not np.isfinite(y):
+                continue
+            if len(cleaned) > 0:
+                last = cleaned[-1].pose.position
+                if abs(x - last.x) < 1e-6 and abs(y - last.y) < 1e-6:
+                    continue
+            if len(cleaned) > 0 and abs(x) < 1e-6 and abs(y) < 1e-6:
+                continue
+            cleaned.append(ps)
+        out.poses = cleaned
+
+        if len(out.poses) < 2:
+            self.get_logger().warn('Cleaned trajectory too short.')
+            return
+
+        # --- publish final Path ---
         self.pub.publish(out)
-        self.get_logger().info(f'Generated timed trajectory: {len(out.poses)} points, total length {L:.2f} m, est T ~ {t_total:.2f} s')
 
-    def repub(self):
-        if self._latest:
-            self._latest.header.stamp = self.get_clock().now().to_msg()
-            self.pub.publish(self._latest)
+        # --- RViz marker visualization ---
+        line_pts = np.array([[p.pose.position.x, p.pose.position.y] for p in out.poses])
+        line = make_line_strip('trajectory', out.header.frame_id, line_pts,
+                               rgba=(0.1, 0.3, 1.0, 0.9), scale=0.03, mid=10)
+        marr = MarkerArray()
+        marr.markers.append(line)
+        self.mpub.publish(marr)
 
+        self.get_logger().info(
+            f"Published cleaned timed trajectory: {len(out.poses)} pts, "
+            f"L={total_len:.2f} m, T={total_time:.2f} s."
+        )
+
+
+# --------------------------------------------------------------
 def main():
     rclpy.init()
     node = TrajectoryGenerator()

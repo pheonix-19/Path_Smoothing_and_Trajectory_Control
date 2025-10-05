@@ -7,18 +7,16 @@ from visualization_msgs.msg import MarkerArray
 from nav_pipeline.viz_utils import make_line_strip, make_spheres
 from nav_pipeline.utils import resample_by_arclength
 
+
 def catmull_rom_spline(points, samples_per_seg=10, alpha=0.5, closed=False):
-    """
-    Safe Catmull-Rom spline interpolation for 2D points.
-    Handles duplicate points and prevents divide-by-zero errors.
-    """
+    """Safe Catmull-Rom spline interpolation for 2-D points."""
     pts = np.asarray(points, dtype=float)
     if pts.shape[0] < 2:
         return pts
 
-    # remove consecutive duplicates / zero-distance points
+    # Remove duplicate or zero-length segments
     diffs = np.linalg.norm(np.diff(pts, axis=0), axis=1)
-    keep = np.concatenate([[True], diffs > 1e-6])
+    keep = np.concatenate([[True], diffs > 1e-8])
     pts = pts[keep]
     if pts.shape[0] < 2:
         return pts
@@ -34,8 +32,8 @@ def catmull_rom_spline(points, samples_per_seg=10, alpha=0.5, closed=False):
         d = np.linalg.norm(pj - pi)
         return ti + np.power(d, alpha) if d > 1e-9 else ti + 1e-6
 
-    def safe_div(a, b):
-        return a / b if abs(b) > 1e-9 else a / 1e-6
+    def denom(a, b):
+        return (a - b) if abs(a - b) > 1e-9 else 1e-6
 
     for i in range(1, len(P) - 2):
         p0, p1, p2, p3 = P[i - 1], P[i], P[i + 1], P[i + 2]
@@ -45,28 +43,32 @@ def catmull_rom_spline(points, samples_per_seg=10, alpha=0.5, closed=False):
         t3 = tj(t2, p2, p3)
         t = np.linspace(t1, t2, samples_per_seg)
 
-        denom = lambda a, b: (a - b) if abs(a - b) > 1e-9 else 1e-6
-
         A1 = (t1 - t)[:, None] / denom(t1, t0) * p0 + (t - t0)[:, None] / denom(t1, t0) * p1
         A2 = (t2 - t)[:, None] / denom(t2, t1) * p1 + (t - t1)[:, None] / denom(t2, t1) * p2
         A3 = (t3 - t)[:, None] / denom(t3, t2) * p2 + (t - t2)[:, None] / denom(t3, t2) * p3
-
         B1 = (t2 - t)[:, None] / denom(t2, t0) * A1 + (t - t0)[:, None] / denom(t2, t0) * A2
         B2 = (t3 - t)[:, None] / denom(t3, t1) * A2 + (t - t1)[:, None] / denom(t3, t1) * A3
-
         C = (t2 - t)[:, None] / denom(t2, t1) * B1 + (t - t1)[:, None] / denom(t2, t1) * B2
         C = C[np.isfinite(C).all(axis=1)]
         if C.size > 0:
             out.append(C)
 
-    if len(out) == 0:
+    if not out:
         return pts
-    return np.vstack(out)
+
+    new_pts = np.vstack(out)
+
+    # Remove any residual (0,0) or repeated coordinates
+    diffs2 = np.linalg.norm(np.diff(new_pts, axis=0), axis=1)
+    keep2 = np.concatenate([[True], diffs2 > 1e-8])
+    new_pts = new_pts[keep2]
+    return new_pts
+
 
 class PathSmoother(Node):
     def __init__(self):
         super().__init__('path_smoother')
-        self.declare_parameter('frame_id', 'map')
+        self.declare_parameter('frame_id', 'odom')
         self.declare_parameter('samples_per_segment', 15)
         self.declare_parameter('resample_ds', 0.03)
         self.declare_parameter('closed', False)
@@ -78,7 +80,7 @@ class PathSmoother(Node):
         self.get_logger().info('PathSmoother ready.')
 
     def on_waypoints(self, msg: Path):
-        pts = [(ps.pose.position.x, ps.pose.position.y) for ps in msg.poses]
+        pts = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
         if len(pts) < 2:
             self.get_logger().warn('Not enough waypoints to smooth.')
             return
@@ -97,6 +99,12 @@ class PathSmoother(Node):
             self.get_logger().warn('Resampling failed.')
             return
 
+        # Remove duplicates / zeros again as a safety step
+        diffs = np.linalg.norm(np.diff(smooth_res, axis=0), axis=1)
+        keep = np.concatenate([[True], diffs > 1e-8])
+        smooth_res = smooth_res[keep]
+
+        # Build Path message
         out = Path()
         out.header.frame_id = msg.header.frame_id or self.get_parameter('frame_id').value
         out.header.stamp = self.get_clock().now().to_msg()
@@ -110,7 +118,7 @@ class PathSmoother(Node):
 
         self.pub.publish(out)
 
-        # Publish RViz markers
+        # RViz markers
         lm = make_line_strip('smoothed', out.header.frame_id, smooth_res,
                              rgba=(0.2, 0.8, 0.2, 1.0), scale=0.03, mid=1)
         ma = make_spheres('waypoints', out.header.frame_id, pts,
@@ -120,7 +128,8 @@ class PathSmoother(Node):
         marr.markers.extend(ma.markers)
         self.mpub.publish(marr)
 
-        self.get_logger().info(f'Published smoothed path with {len(out.poses)} points.')
+        self.get_logger().info(f'Published smoothed path with {len(out.poses)} clean points.')
+
 
 def main():
     rclpy.init()

@@ -14,7 +14,8 @@ setup(
             'launch/sim_world.launch.py',
             'launch/pipeline_demo.launch.py',
             'launch/rviz_only.launch.py',
-            'launch/full_demo.launch.py'
+            'launch/full_demo.launch.py',
+            'launch/debug_launch.py'
         ]),
         ('share/' + package_name + '/config', [
             'config/waypoints.yaml',
@@ -35,7 +36,8 @@ setup(
             'path_smoother = nav_pipeline.path_smoother:main',
             'trajectory_generator = nav_pipeline.trajectory_generator:main',
             'pure_pursuit_controller = nav_pipeline.pure_pursuit_controller:main',
-
+            'debug_controller = nav_pipeline.debug_controller:main',
+            'fake_odom_publisher = nav_pipeline.fake_odom_publisher:main',
         ],
     },
 )

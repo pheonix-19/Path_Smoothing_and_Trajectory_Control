@@ -1,30 +1,63 @@
 import numpy as np
 
-def dist(a, b):
-    a = np.asarray(a); b = np.asarray(b)
-    return np.linalg.norm(a - b)
 
-def path_length(points):
-    if len(points) < 2:
-        return 0.0
-    return float(sum(dist(points[i], points[i+1]) for i in range(len(points)-1)))
+def resample_by_arclength(points, ds=0.05):
+    """
+    Resample a 2D polyline (list of [x, y]) by equal arc-length spacing.
 
-def cumulative_lengths(points):
-    L = [0.0]
-    for i in range(1, len(points)):
-        L.append(L[-1] + dist(points[i-1], points[i]))
-    return np.array(L, dtype=float)
+    Parameters
+    ----------
+    points : (N,2) array-like
+        Input coordinates (x, y)
+    ds : float
+        Desired spacing between successive points
 
-def resample_by_arclength(points, ds):
-    """Return points resampled by arclength spacing ds."""
-    if len(points) < 2:
-        return np.array(points, dtype=float)
-    pts = np.array(points, dtype=float)
-    s = cumulative_lengths(pts)
-    total = s[-1]
-    if total == 0.0:
+    Returns
+    -------
+    new_pts : (M,2) ndarray
+        Resampled coordinates at uniform arc length
+    """
+    pts = np.asarray(points, dtype=float)
+    if pts.shape[0] < 2:
         return pts
+
+    # --- Remove NaNs and duplicates first ---
+    diffs = np.diff(pts, axis=0)
+    seglen = np.linalg.norm(diffs, axis=1)
+    keep = np.concatenate([[True], seglen > 1e-8])
+    pts = pts[keep]
+
+    if pts.shape[0] < 2:
+        return pts
+
+    # --- Compute cumulative arc length ---
+    diffs = np.diff(pts, axis=0)
+    seglen = np.linalg.norm(diffs, axis=1)
+    s = np.concatenate([[0.0], np.cumsum(seglen)])
+    total = s[-1]
+
+    if total < 1e-9:
+        return pts
+
+    # --- Create uniform arclength samples ---
     s_new = np.arange(0.0, total + 1e-9, ds)
-    x = np.interp(s_new, s, pts[:,0])
-    y = np.interp(s_new, s, pts[:,1])
-    return np.vstack([x,y]).T
+    x_new = np.interp(s_new, s, pts[:, 0])
+    y_new = np.interp(s_new, s, pts[:, 1])
+    new_pts = np.stack([x_new, y_new], axis=1)
+
+    # --- Remove any residual near-zero segments ---
+    diffs2 = np.linalg.norm(np.diff(new_pts, axis=0), axis=1)
+    keep2 = np.concatenate([[True], diffs2 > 1e-8])
+    new_pts = new_pts[keep2]
+
+    return new_pts
+
+
+# Optional helper for computing total path length (used for debugging)
+def path_length(points):
+    pts = np.asarray(points, dtype=float)
+    if pts.shape[0] < 2:
+        return 0.0
+    diffs = np.diff(pts, axis=0)
+    seglen = np.linalg.norm(diffs, axis=1)
+    return float(np.sum(seglen))
