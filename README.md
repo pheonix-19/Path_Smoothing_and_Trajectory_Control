@@ -1,4 +1,4 @@
-# Path Smoothing and Trajectory Control in 2D Space
+# Path Smoothing and Trajectory Control
 
 A ROS 2 navigation pipeline implementation that transforms discrete waypoints into smooth trajectories with time parameterization for differential drive robots.
 
