@@ -1,0 +1,29 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=filled, fillcolor=lightblue, fontname="Arial"];
+  edge [fontname="Arial", fontsize=10];
+  
+  subgraph cluster_0 {
+    label="Navigation Pipeline";
+    fontname="Arial Bold";
+    style=filled;
+    fillcolor=aliceblue;
+    
+    waypoints [label="Waypoint Server\n(waypoint_server.py)"];
+    path [label="Path Smoother\n(path_smoother.py)"];
+    traj [label="Trajectory Generator\n(trajectory_generator.py)"];
+    control [label="Pure Pursuit Controller\n(pure_pursuit_controller.py)"];
+    
+    waypoints -> path [label="raw_waypoints"];
+    path -> traj [label="smoothed_path"];
+    traj -> control [label="timed_trajectory"];
+  }
+  
+  config [label="YAML Config\n(waypoints.yaml)", shape=note, fillcolor=lightyellow];
+  odom [label="Odometry\n(/odom)", shape=oval, fillcolor=lightgreen];
+  robot [label="TurtleBot3\nDifferential Drive", shape=oval, fillcolor=lightcoral];
+  
+  config -> waypoints [style=dashed];
+  odom -> control;
+  control -> robot [label="cmd_vel"];
+}
