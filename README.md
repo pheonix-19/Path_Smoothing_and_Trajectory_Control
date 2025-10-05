@@ -13,6 +13,22 @@ A ROS 2 navigation pipeline implementation that transforms discrete waypoints in
 
 *Click the image above to watch the full demonstration on YouTube*
 
+[![YouTube](https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtu.be/cK_fbP3ixpg)
+
+## Visualizations
+
+### Gazebo Simulation Environment
+![Gazebo Simulation](docs/images/gazebo.png)
+*TurtleBot3 in Gazebo simulation environment*
+
+### Path Visualization
+![Path Visualization](docs/images/path.png)
+*Visualization of waypoints (red), smoothed path (green)*
+
+### Marker Visualization
+![Marker Visualization](docs/images/marker.png)
+*RViz visualization showing navigation markers and robot position*
+
 ## Overview
 
 This project implements a complete navigation pipeline for autonomous mobile robots in 2D space. It consists of four main components:
