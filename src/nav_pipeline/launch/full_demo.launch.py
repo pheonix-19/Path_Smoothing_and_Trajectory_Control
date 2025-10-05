@@ -104,14 +104,6 @@ def generate_launch_description():
         output='screen',
     )
 
-    # === Debug Controller ===
-    debug = Node(
-        package='nav_pipeline',
-        executable='debug_controller',
-        name='debug_controller',
-        output='screen',
-    )
-    
     # === RViz (autoload config) ===
     rviz_config = os.path.join(
         FindPackageShare('nav_pipeline').find('nav_pipeline'),
@@ -138,6 +130,5 @@ def generate_launch_description():
         smoother,
         traj,
         ctrl,
-        debug,
         rviz,
     ])
